@@ -8,8 +8,10 @@ from enum import Enum
 class Rotation(Enum):
     """LTspice symbol rotations.
 
-    `R*` rotate counter-clockwise. `M*` mirror across the vertical axis
-    first, then rotate. All eight orientations are round-trip stable.
+    `R*` rotate counter-clockwise in LTspice's y-down screen frame.
+    `M*` applies the same rotation, then mirrors across x. All eight
+    orientations are round-trip stable. See ``netlist._rotate_pin`` for
+    the empirically verified pin-coord transformations.
     """
 
     R0 = "R0"
