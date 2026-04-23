@@ -60,6 +60,19 @@ class TestWriteAsc:
         assert lines[0] == "Version 4"
         assert lines[1] == "SHEET 1 880 680"
 
+    def test_emits_crlf_line_endings(self, tmp_path):
+        """LTspice 26 on Windows rejects LF-only .asc with -netlist."""
+        s = _build_rc_lowpass()
+        path = tmp_path / "rc.asc"
+        write_asc(s, path)
+        raw = path.read_bytes()
+        assert b"\r\n" in raw
+        # No stray bare-LF lines (every \n must be preceded by \r).
+        for i, b in enumerate(raw):
+            if b == 0x0A:
+                assert i > 0 and raw[i - 1] == 0x0D, \
+                    f"bare LF at byte {i}"
+
     def test_rc_lowpass_structure(self, tmp_path):
         s = _build_rc_lowpass()
         path = tmp_path / "rc.asc"
