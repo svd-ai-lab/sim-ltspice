@@ -30,6 +30,7 @@ from sim_ltspice.schematic import (
     Window,
     Wire,
 )
+from sim_ltspice.symbols import Pin, SymbolCatalog, SymbolDef, parse_asy
 
 __all__ = [
     "__version__",
@@ -58,4 +59,9 @@ __all__ = [
     "Rotation",
     "read_asc",
     "write_asc",
+    # Symbol catalog
+    "SymbolCatalog",
+    "SymbolDef",
+    "Pin",
+    "parse_asy",
 ]
