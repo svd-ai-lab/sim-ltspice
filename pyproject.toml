@@ -1,0 +1,49 @@
+[project]
+name = "sim-ltspice"
+version = "0.1.0.dev0"
+description = "Python API for LTspice: .asc / .asy / .net / .raw / .log parsing and a layout engine."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [
+    { name = "svd-ai-lab" },
+]
+keywords = ["ltspice", "spice", "eda", "simulation", "schematic", "netlist", "circuit"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.4"]
+
+[project.urls]
+Homepage     = "https://github.com/svd-ai-lab/sim-ltspice"
+Repository   = "https://github.com/svd-ai-lab/sim-ltspice"
+Issues       = "https://github.com/svd-ai-lab/sim-ltspice/issues"
+Changelog    = "https://github.com/svd-ai-lab/sim-ltspice/blob/main/CHANGELOG.md"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sim_ltspice"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: requires LTspice installed on the host"]
+
+[tool.ruff]
+target-version = "py310"
