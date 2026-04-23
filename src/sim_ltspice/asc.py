@@ -8,8 +8,9 @@ Encoding:
 
 - Read: sniff UTF-16 LE / UTF-8 BOM first, then try UTF-8 and fall
   back to Latin-1 so files from any LTspice generation parse.
-- Write: UTF-8 with LF line endings (LTspice on every platform
-  accepts both CRLF and LF on read; LF keeps git diffs clean).
+- Write: UTF-8 with CRLF line endings. LTspice 26.x on Windows
+  silently refuses to netlist LF-only .asc files (``-netlist`` exits
+  without writing `.net`), so we emit the native format.
 
 Unknown statements (decorative `LINE` / `RECTANGLE` / `CIRCLE`,
 `IOPIN`, `BUSTAP`, and friends) are preserved verbatim as `raw_tail`
@@ -196,7 +197,7 @@ def read_asc(path: Path | str) -> Schematic:
 
 
 def write_asc(schem: Schematic, path: Path | str) -> None:
-    """Write `schem` to `path` as Version 4 `.asc`, UTF-8, LF-terminated."""
+    """Write `schem` to `path` as Version 4 `.asc`, UTF-8, CRLF-terminated."""
     path = Path(path)
     out: list[str] = []
     out.append(f"Version {schem.version}")
@@ -228,4 +229,7 @@ def write_asc(schem: Schematic, path: Path | str) -> None:
     if schem.raw_tail:
         out.extend(schem.raw_tail)
 
-    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    # CRLF required: LTspice 26 on Windows silently rejects LF-terminated
+    # .asc files when invoked with `-netlist`. Emit bytes directly so
+    # Python's universal-newlines write doesn't re-translate.
+    path.write_bytes(("\r\n".join(out) + "\r\n").encode("utf-8"))
