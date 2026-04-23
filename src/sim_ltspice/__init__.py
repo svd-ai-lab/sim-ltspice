@@ -1,21 +1,38 @@
 """Python API for LTspice.
 
-This package is in early scaffolding. The v0.1 surface will expose:
-
-    from sim_ltspice import (
-        read_asc, write_asc,          # .asc text I/O
-        parse_net, write_net,         # .net text I/O
-        Schematic,                    # in-memory model
-        SymbolCatalog,                # .asy symbol library index
-        parse_log, trace_names,       # result parsers
-        run_net, run_asc,             # subprocess runners
-        find_ltspice,                 # install discovery
-    )
-    from sim_ltspice.layout import net_to_schematic
-
-For now the package exports only its version string.
+v0.1 exposes the runtime layer (installs, batch runner, .log/.raw
+parsers). The authoring layer (Schematic model, .asc read/write,
+symbol catalog, layout engine) lands in subsequent commits.
 """
 from __future__ import annotations
 
 __version__ = "0.1.0.dev0"
-__all__ = ["__version__"]
+
+from sim_ltspice.install import Install, find_ltspice
+from sim_ltspice.log import LogResult, Measure, parse_log, read_log
+from sim_ltspice.raw import trace_names
+from sim_ltspice.runner import (
+    LtspiceError,
+    LtspiceNotInstalled,
+    NETLIST_SUFFIXES,
+    RunResult,
+    UnsupportedInput,
+    run_net,
+)
+
+__all__ = [
+    "__version__",
+    "Install",
+    "find_ltspice",
+    "LogResult",
+    "Measure",
+    "parse_log",
+    "read_log",
+    "trace_names",
+    "LtspiceError",
+    "LtspiceNotInstalled",
+    "NETLIST_SUFFIXES",
+    "RunResult",
+    "UnsupportedInput",
+    "run_net",
+]
