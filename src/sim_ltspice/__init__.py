@@ -11,6 +11,7 @@ __version__ = "0.1.0.dev0"
 from sim_ltspice.asc import read_asc, write_asc
 from sim_ltspice.install import Install, find_ltspice
 from sim_ltspice.log import LogResult, Measure, parse_log, read_log
+from sim_ltspice.layout import UnsupportedTopology, netlist_to_schematic
 from sim_ltspice.netlist import (
     Directive,
     Element,
@@ -81,4 +82,7 @@ __all__ = [
     "parse_net",
     "schematic_to_netlist",
     "write_net",
+    # Layout (netlist → schematic)
+    "UnsupportedTopology",
+    "netlist_to_schematic",
 ]
