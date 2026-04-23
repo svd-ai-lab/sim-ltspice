@@ -1,6 +1,8 @@
 """Unit tests for sim_ltspice.asc (read/write) and schematic model."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from sim_ltspice.asc import read_asc, write_asc
 from sim_ltspice.schematic import (
     Flag,
@@ -159,6 +161,23 @@ class TestReadAsc:
         schem = read_asc(p)
         assert schem.version == 4
         assert len(schem.wires) == 1
+
+    def test_roundtrip_real_ltspice_file(self, tmp_path):
+        """Byte-identical round-trip of a shipped LTspice example.
+
+        Guards against writer regressions that corrupt the native format
+        (LF instead of CRLF, reordered SYMATTRs, lost decorative graphics).
+        The fixture is a verbatim copy of
+        ``LTspice/examples/Educational/MonteCarlo.asc``.
+        """
+        fixture = Path(__file__).parent / "fixtures" / "montecarlo.asc"
+        original_bytes = fixture.read_bytes()
+
+        schem = read_asc(fixture)
+        out = tmp_path / "montecarlo_rewritten.asc"
+        write_asc(schem, out)
+
+        assert out.read_bytes() == original_bytes
 
 
 class TestRotation:
