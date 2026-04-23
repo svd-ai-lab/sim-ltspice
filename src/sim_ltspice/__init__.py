@@ -11,6 +11,15 @@ __version__ = "0.1.0.dev0"
 from sim_ltspice.asc import read_asc, write_asc
 from sim_ltspice.install import Install, find_ltspice
 from sim_ltspice.log import LogResult, Measure, parse_log, read_log
+from sim_ltspice.netlist import (
+    Directive,
+    Element,
+    FlattenError,
+    Netlist,
+    parse_net,
+    schematic_to_netlist,
+    write_net,
+)
 from sim_ltspice.raw import trace_names
 from sim_ltspice.runner import (
     LtspiceError,
@@ -64,4 +73,12 @@ __all__ = [
     "SymbolDef",
     "Pin",
     "parse_asy",
+    # Netlist
+    "Directive",
+    "Element",
+    "FlattenError",
+    "Netlist",
+    "parse_net",
+    "schematic_to_netlist",
+    "write_net",
 ]
