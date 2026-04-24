@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] — 2026-04-24
+
+Closes Stage 2f: `.raw` waveform data access is now a first-class API.
+A run, a cursor query, a CSV export, and a two-run regression diff are
+all reachable without ever opening the LTspice waveform viewer.
 
 ### Added
 - `RawRead` — full binary `.raw` waveform parser. Decodes the three LTspice
@@ -26,6 +30,13 @@
 - `RawRead.to_dataframe()` — requires the new ``[dataframe]`` extra
   (``pip install 'sim-ltspice[dataframe]'``); returns a ``pandas.DataFrame``
   with the axis as index and one column per non-axis trace.
+- `sim_ltspice.diff.diff(a, b)` — two-run comparison helper for
+  regression testing. Accepts paths or pre-loaded `RawRead` objects.
+  Uses `numpy.allclose`-style tolerance (``|a-b| <= atol + rtol*|b|``).
+  Returns a frozen `DiffResult` with per-trace `TraceDiff` records
+  (max_abs / max_rel / within_tol), plus set-difference reporting
+  (`only_in_a` / `only_in_b`) and axis-mismatch diagnostics. Works on
+  real and complex traces.
 - `sim_ltspice.raw` now exports `RawRead`, `Variable`, and
   `UnsupportedRawFormat` alongside the original `trace_names` helper, which
   stays available for callers that only need names.
@@ -40,15 +51,7 @@
   produces output. Pass `timeout=None` to restore the pre-0.2
   unbounded behaviour, or any positive float to tighten the bound.
 
-- `sim_ltspice.diff.diff(a, b)` — two-run comparison helper for
-  regression testing. Accepts paths or pre-loaded `RawRead` objects.
-  Uses `numpy.allclose`-style tolerance (``|a-b| <= atol + rtol*|b|``).
-  Returns a frozen `DiffResult` with per-trace `TraceDiff` records
-  (max_abs / max_rel / within_tol), plus set-difference reporting
-  (`only_in_a` / `only_in_b`) and axis-mismatch diagnostics. Works on
-  real and complex traces.
-
-### Known gaps (tracked for v0.2+)
+### Known gaps (tracked for v0.3+)
 - `fastaccess` transposed layout — deferred; currently raises
   `UnsupportedRawFormat`.
 
