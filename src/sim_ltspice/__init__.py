@@ -21,6 +21,7 @@ from sim_ltspice.netlist import (
     schematic_to_netlist,
     write_net,
 )
+from sim_ltspice.diff import DiffResult, TraceDiff, diff
 from sim_ltspice.raw import (
     InvalidExpression,
     RawRead,
@@ -62,6 +63,9 @@ __all__ = [
     "UnsupportedRawFormat",
     "Variable",
     "trace_names",
+    "DiffResult",
+    "TraceDiff",
+    "diff",
     "LtspiceError",
     "LtspiceNotInstalled",
     "NETLIST_SUFFIXES",

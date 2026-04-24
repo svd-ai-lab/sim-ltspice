@@ -40,11 +40,17 @@
   produces output. Pass `timeout=None` to restore the pre-0.2
   unbounded behaviour, or any positive float to tighten the bound.
 
+- `sim_ltspice.diff.diff(a, b)` — two-run comparison helper for
+  regression testing. Accepts paths or pre-loaded `RawRead` objects.
+  Uses `numpy.allclose`-style tolerance (``|a-b| <= atol + rtol*|b|``).
+  Returns a frozen `DiffResult` with per-trace `TraceDiff` records
+  (max_abs / max_rel / within_tol), plus set-difference reporting
+  (`only_in_a` / `only_in_b`) and axis-mismatch diagnostics. Works on
+  real and complex traces.
+
 ### Known gaps (tracked for v0.2+)
 - `fastaccess` transposed layout — deferred; currently raises
   `UnsupportedRawFormat`.
-- Run-diff helpers (`diff(a, b, traces=..., tolerance=...)`) — PR 4 of
-  Stage 2f.
 
 ## [0.1.0] — 2026-04-24
 
