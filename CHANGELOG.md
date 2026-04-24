@@ -17,6 +17,15 @@
     (`sqrt(mean(|x|²))` on complex).
   - `.sample_at(name, x)` — linear-interpolated value at axis position
     `x`; raises on stepped sweeps and out-of-range requests.
+- `RawRead.eval(expr)` — evaluate an arithmetic expression over the
+  loaded traces. Accepts ``V(node)``/``I(device)`` references, numeric
+  literals, and ``+ - * / ** %`` operators. Disallowed constructs
+  (calls, attribute, subscript, comparisons) raise `InvalidExpression`.
+- `RawRead.to_csv(path)` — write every trace to CSV. Complex traces
+  expand into `<name>.re` / `<name>.im` column pairs.
+- `RawRead.to_dataframe()` — requires the new ``[dataframe]`` extra
+  (``pip install 'sim-ltspice[dataframe]'``); returns a ``pandas.DataFrame``
+  with the axis as index and one column per non-axis trace.
 - `sim_ltspice.raw` now exports `RawRead`, `Variable`, and
   `UnsupportedRawFormat` alongside the original `trace_names` helper, which
   stays available for callers that only need names.
@@ -25,8 +34,8 @@
 ### Known gaps (tracked for v0.2+)
 - `fastaccess` transposed layout — deferred; currently raises
   `UnsupportedRawFormat`.
-- Expression evaluator (`rr.eval("V(out) - V(in)")`), CSV / DataFrame
-  export, and run-diff helpers — PRs 3–4 in Stage 2f.
+- Run-diff helpers (`diff(a, b, traces=..., tolerance=...)`) — PR 4 of
+  Stage 2f.
 
 ## [0.1.0] — 2026-04-24
 

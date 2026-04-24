@@ -28,7 +28,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.4"]
+dev = ["pytest>=8.0", "ruff>=0.4", "pandas>=2.0"]
+dataframe = ["pandas>=2.0"]
 
 [project.urls]
 Homepage     = "https://github.com/svd-ai-lab/sim-ltspice"
