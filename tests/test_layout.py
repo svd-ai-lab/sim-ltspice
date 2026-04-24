@@ -11,7 +11,6 @@ from sim_ltspice.netlist import (
     Element,
     Netlist,
     schematic_to_netlist,
-    write_net,
 )
 from sim_ltspice.schematic import Rotation
 from sim_ltspice.symbols import Pin, SymbolCatalog, SymbolDef

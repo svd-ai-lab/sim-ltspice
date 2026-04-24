@@ -15,9 +15,6 @@ Exit code 0 iff both rates clear the gate thresholds.
 from __future__ import annotations
 
 import argparse
-import sys
-import traceback
-from dataclasses import asdict
 from pathlib import Path
 
 from sim_ltspice.asc import read_asc, write_asc
