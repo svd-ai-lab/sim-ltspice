@@ -207,3 +207,125 @@ class TestBackCompat:
         """The pre-v0.2 module-level ``trace_names`` helper must keep working."""
         names = trace_names(FIX / "tran_rc.raw")
         assert names == ["time", "V(in)", "V(out)", "I(C1)", "I(R1)", "I(V1)"]
+
+
+class TestAsciiBody:
+    """ASCII `.raw` ('Values:' sentinel) — same API as binary.
+
+    Fixtures in ``ascii_*.raw`` were generated from the binary fixtures
+    using the tab-separated / comma-separated-complex format documented
+    in spicelib's parser. LTspice has no batch CLI switch to force
+    ASCII output, so emitting the file from a known-good binary
+    exercises the ASCII decoder against real LTspice conventions.
+    """
+
+    def test_ascii_transient_matches_binary(self):
+        b = RawRead(FIX / "tran_rc.raw")
+        a = RawRead(FIX / "ascii_tran_rc.raw")
+        assert b.trace_names() == a.trace_names()
+        assert b.n_points == a.n_points
+        np.testing.assert_allclose(a.axis, b.axis)
+        for name in b.trace_names()[1:]:
+            np.testing.assert_allclose(
+                a.trace(name), b.trace(name), rtol=1e-6, atol=1e-12
+            )
+
+    def test_ascii_ac_matches_binary(self):
+        b = RawRead(FIX / "ac_rlc.raw")
+        a = RawRead(FIX / "ascii_ac_rlc.raw")
+        for name in b.trace_names():
+            # 15-digit scientific round-trip ≈ 1e-15 relative error.
+            np.testing.assert_allclose(
+                a.trace(name), b.trace(name), rtol=1e-10, atol=1e-14
+            )
+
+    def test_ascii_flags_preserve_complex_dtype(self):
+        a = RawRead(FIX / "ascii_ac_rlc.raw")
+        assert a.is_complex is True
+        assert a.trace("V(in)").dtype == np.complex128
+
+    def test_ascii_point_index_out_of_order_raises(self, tmp_path):
+        """Corrupt the index of the second point — decoder must reject."""
+        raw = (FIX / "ascii_tran_rc.raw").read_bytes()
+        text = raw.decode("utf-16-le")
+        # Replace the first "1\t" tag (marker for point 1) with "99\t".
+        marker = "1\t"
+        i = text.index("Values:\n") + len("Values:\n")
+        # Skip past the first point's n_variables lines to land on the
+        # "1\t" of point 1 specifically.
+        for _ in range(6):
+            i = text.index("\n", i) + 1
+        assert text[i : i + len(marker)] == marker
+        corrupted = text[:i] + "99\t" + text[i + len(marker) :]
+        bad = tmp_path / "corrupt.raw"
+        bad.write_bytes(corrupted.encode("utf-16-le"))
+        with pytest.raises(UnsupportedRawFormat, match="out of order"):
+            RawRead(bad)
+
+
+class TestCursors:
+    def setup_method(self):
+        self.tran = RawRead(FIX / "tran_rc.raw")
+        self.ac = RawRead(FIX / "ac_rlc.raw")
+        self.step = RawRead(FIX / "step_rc.raw")
+
+    def test_max_matches_numpy(self):
+        arr = self.tran.trace("V(out)")
+        assert self.tran.max("V(out)") == pytest.approx(float(arr.max()))
+
+    def test_min_on_real_trace(self):
+        """V(in) starts at 0 and a PULSE ramps up — min is ≥ 0."""
+        assert self.tran.min("V(in)") >= 0.0
+
+    def test_mean_real(self):
+        arr = self.tran.trace("V(in)")
+        assert self.tran.mean("V(in)") == pytest.approx(float(arr.mean()))
+
+    def test_rms_real(self):
+        """RMS is sqrt(mean(x**2)); match a hand computation."""
+        arr = self.tran.trace("V(in)")
+        expect = float(np.sqrt((arr ** 2).mean()))
+        assert self.tran.rms("V(in)") == pytest.approx(expect)
+
+    def test_rms_complex_uses_magnitude(self):
+        """For complex traces RMS must equal sqrt(mean(|x|**2))."""
+        arr = self.ac.trace("V(out)")
+        expect = float(np.sqrt((np.abs(arr) ** 2).mean()))
+        assert self.ac.rms("V(out)") == pytest.approx(expect)
+
+    def test_mean_complex_returns_complex(self):
+        val = self.ac.mean("V(in)")
+        assert isinstance(val, complex)
+        # V(in) = 1+0j at every frequency → mean is exactly 1+0j.
+        assert val == pytest.approx(1 + 0j, abs=1e-10)
+
+    def test_sample_at_endpoint(self):
+        """Sampling at axis[0] must return the first point exactly."""
+        assert self.tran.sample_at("V(out)", 0.0) == pytest.approx(
+            float(self.tran.trace("V(out)")[0])
+        )
+        assert self.tran.sample_at("V(out)", self.tran.axis[-1]) == pytest.approx(
+            float(self.tran.trace("V(out)")[-1])
+        )
+
+    def test_sample_at_midpoint(self):
+        """Linearly interpolate between two neighbouring points."""
+        t = self.tran.axis
+        v = self.tran.trace("V(out)")
+        x = 0.5 * (t[100] + t[101])
+        expect = 0.5 * (v[100] + v[101])
+        assert self.tran.sample_at("V(out)", x) == pytest.approx(expect, rel=1e-6)
+
+    def test_sample_at_out_of_range_raises(self):
+        with pytest.raises(ValueError, match="outside range"):
+            self.tran.sample_at("V(out)", 1.0)  # t_max is 5 ms
+
+    def test_sample_at_stepped_raises(self):
+        with pytest.raises(ValueError, match="stepped"):
+            self.step.sample_at("V(out)", 0.001)
+
+    def test_sample_at_complex_trace(self):
+        """AC: interpolated V(in) must still be 1+0j (flat in freq)."""
+        val = self.ac.sample_at("V(in)", 1e3)
+        assert isinstance(val, complex)
+        assert val == pytest.approx(1 + 0j, abs=1e-9)

@@ -170,19 +170,21 @@ class RawRead:
         self.n_points = n_points
         self.n_variables = len(self.variables)
 
-        # We don't support the transposed ASCII/fastaccess variants yet.
+        # Detect which body format we're about to decode.
+        self._is_ascii = header.endswith(_VALUES_SENTINEL)
+
+        # fastaccess (transposed variable-major layout) is not yet decoded.
         if "fastaccess" in self.flags:
             raise UnsupportedRawFormat(
                 "`fastaccess` .raw files are not yet supported; re-run without "
                 "the fastaccess option or wait for a later sim-ltspice release"
             )
-        if header.endswith(_VALUES_SENTINEL):
-            raise UnsupportedRawFormat(
-                "ASCII `.raw` files are not yet supported (PR2); save in "
-                "binary format or wait for a later sim-ltspice release"
-            )
 
-        self._data = self._decode_body(raw[body_offset:])
+        body_bytes = raw[body_offset:]
+        if self._is_ascii:
+            self._data = self._decode_ascii_body(body_bytes)
+        else:
+            self._data = self._decode_body(body_bytes)
 
         # Transient axis: compressed points are flagged by a negative sign.
         if self.plotname.startswith("Transient"):
@@ -245,6 +247,69 @@ class RawRead:
             out[:, 1:] = rec["rest"].astype(np.float64, copy=False)
         return out
 
+    def _decode_ascii_body(self, body: bytes) -> np.ndarray:
+        """Parse a ``Values:`` body written in UTF-16 LE tab-separated text.
+
+        Each point produces ``n_variables`` lines:
+
+        * Line 0: ``<point_idx>\\t<axis_value>``
+        * Lines 1..N-1: ``\\t<value>`` (leading tab, value is the trace)
+
+        Complex values are written as ``<real>,<imag>``. Blank lines are
+        silently skipped, matching spicelib's parser.
+        """
+        nvars = self.n_variables
+        npts = self.n_points
+        dtype = np.complex128 if self.is_complex else np.float64
+        out = np.empty((npts, nvars), dtype=dtype)
+
+        text = body.decode("utf-16-le", errors="replace")
+        # LTspice always writes `\n`; don't let a trailing BOM or stray
+        # characters break the sequence. Strip lines, drop empties.
+        lines = [line for line in (ln.strip() for ln in text.splitlines()) if line]
+        expected = npts * nvars
+        if len(lines) < expected:
+            raise UnsupportedRawFormat(
+                f"ASCII body has {len(lines)} non-blank lines, need "
+                f"{expected} ({npts} points × {nvars} variables)"
+            )
+
+        i = 0
+        for p in range(npts):
+            for v in range(nvars):
+                line = lines[i]
+                i += 1
+                if v == 0:
+                    # Point index prefix. spicelib validates it strictly;
+                    # we do the same so fixture drift is caught early.
+                    idx_str, _, value_str = line.partition("\t")
+                    try:
+                        idx = int(idx_str)
+                    except ValueError as exc:
+                        raise UnsupportedRawFormat(
+                            f"ASCII body: expected '<idx>\\t<axis>' at point "
+                            f"{p}, got {line!r}"
+                        ) from exc
+                    if idx != p:
+                        raise UnsupportedRawFormat(
+                            f"ASCII body: point index {idx} out of order "
+                            f"(expected {p})"
+                        )
+                else:
+                    value_str = line
+
+                if self.is_complex:
+                    real_s, _, imag_s = value_str.partition(",")
+                    if not imag_s:
+                        raise UnsupportedRawFormat(
+                            f"ASCII body: expected 'real,imag' at point {p} "
+                            f"var {v}, got {value_str!r}"
+                        )
+                    out[p, v] = complex(float(real_s), float(imag_s))
+                else:
+                    out[p, v] = float(value_str)
+        return out
+
     # -- public surface ---------------------------------------------------
 
     @property
@@ -278,6 +343,73 @@ class RawRead:
     def trace(self, name: str) -> np.ndarray:
         """Return the array for one trace by name."""
         return self._data[:, self._index_of(name)]
+
+    # -- cursor helpers ---------------------------------------------------
+
+    def max(self, name: str) -> float:
+        """Peak value of trace ``name`` (magnitude for complex)."""
+        arr = self.trace(name)
+        return float(np.abs(arr).max() if np.iscomplexobj(arr) else arr.max())
+
+    def min(self, name: str) -> float:
+        """Minimum value of trace ``name`` (magnitude for complex)."""
+        arr = self.trace(name)
+        return float(np.abs(arr).min() if np.iscomplexobj(arr) else arr.min())
+
+    def mean(self, name: str) -> float | complex:
+        """Arithmetic mean of trace ``name``.
+
+        For complex traces this is the complex mean, not the magnitude
+        mean — caller can take abs() / angle() themselves.
+        """
+        arr = self.trace(name)
+        return complex(arr.mean()) if np.iscomplexobj(arr) else float(arr.mean())
+
+    def rms(self, name: str) -> float:
+        """Root-mean-square of trace ``name``.
+
+        Uses ``sqrt(mean(|x|^2))`` so complex traces get their magnitude
+        RMS — matching what LTspice's waveform viewer reports.
+        """
+        arr = self.trace(name)
+        mag2 = np.abs(arr) ** 2 if np.iscomplexobj(arr) else arr ** 2
+        return float(np.sqrt(mag2.mean()))
+
+    def sample_at(self, name: str, x: float) -> float | complex:
+        """Linear-interpolated value of trace ``name`` at axis position ``x``.
+
+        The axis must be real (time or frequency). For AC analyses we
+        index on the real part of the complex frequency axis, which
+        LTspice always writes with a zero imaginary part.
+
+        Raises ``ValueError`` for stepped sweeps (ambiguous — the axis
+        isn't monotonic) and ``KeyError`` for unknown trace names.
+        """
+        if self.is_stepped:
+            raise ValueError(
+                "sample_at is ambiguous on stepped sweeps — split by step "
+                "boundary first (planned for a later release)"
+            )
+        axis = self.axis
+        if np.iscomplexobj(axis):
+            axis = axis.real
+        if axis.size < 2:
+            raise ValueError(
+                f"cannot interpolate on an axis with {axis.size} point(s)"
+            )
+        if not (axis[0] <= x <= axis[-1]):
+            raise ValueError(
+                f"axis position {x} outside range [{axis[0]}, {axis[-1]}]"
+            )
+        arr = self.trace(name)
+        if np.iscomplexobj(arr):
+            # numpy.interp is real-only; interpolate real and imaginary
+            # independently.
+            return complex(
+                np.interp(x, axis, arr.real),
+                np.interp(x, axis, arr.imag),
+            )
+        return float(np.interp(x, axis, arr))
 
     def __repr__(self) -> str:
         return (

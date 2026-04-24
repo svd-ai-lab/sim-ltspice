@@ -8,17 +8,25 @@
   float64; `complex`: all complex128) into NumPy arrays. Applies the
   compressed-point sign convention on transient time axes. Fixture-backed
   tests cover transient, `.op`, `.ac`, `.step`, and `.noise` files.
+- ASCII `.raw` (``Values:`` sentinel) bodies — UTF-16 LE tab-separated text
+  with comma-separated real,imag complex values. Verified against
+  binary-twin fixtures.
+- Cursor helpers on `RawRead`:
+  - `.max(name)` / `.min(name)` — peak / minimum (magnitude for complex).
+  - `.mean(name)` / `.rms(name)` — arithmetic mean and RMS
+    (`sqrt(mean(|x|²))` on complex).
+  - `.sample_at(name, x)` — linear-interpolated value at axis position
+    `x`; raises on stepped sweeps and out-of-range requests.
 - `sim_ltspice.raw` now exports `RawRead`, `Variable`, and
   `UnsupportedRawFormat` alongside the original `trace_names` helper, which
   stays available for callers that only need names.
 - `numpy>=1.24` is now a runtime dependency.
 
 ### Known gaps (tracked for v0.2+)
-- ASCII `.raw` (``Values:`` sentinel) — deferred to PR 2.
 - `fastaccess` transposed layout — deferred; currently raises
   `UnsupportedRawFormat`.
-- Cursor helpers (`.max`, `.rms`, `.sample_at`), expression evaluator,
-  CSV / DataFrame export, and run-diff helpers — PRs 2–4 in Stage 2f.
+- Expression evaluator (`rr.eval("V(out) - V(in)")`), CSV / DataFrame
+  export, and run-diff helpers — PRs 3–4 in Stage 2f.
 
 ## [0.1.0] — 2026-04-24
 
