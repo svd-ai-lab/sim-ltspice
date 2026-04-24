@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from sim_ltspice.netlist import (
-    Directive,
     Element,
     FlattenError,
     Netlist,
