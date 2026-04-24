@@ -31,6 +31,15 @@
   stays available for callers that only need names.
 - `numpy>=1.24` is now a runtime dependency.
 
+### Changed
+- `run_net` now enforces a default 300-second subprocess timeout
+  (`sim_ltspice.runner.DEFAULT_TIMEOUT_S`). On timeout the child is
+  terminated and the returned `RunResult` has `exit_code=124` and a
+  `stderr` explaining the hang — no `TimeoutExpired` propagates. This
+  fails fast on the Windows SSH session-0 hazard where LTspice never
+  produces output. Pass `timeout=None` to restore the pre-0.2
+  unbounded behaviour, or any positive float to tighten the bound.
+
 ### Known gaps (tracked for v0.2+)
 - `fastaccess` transposed layout — deferred; currently raises
   `UnsupportedRawFormat`.
