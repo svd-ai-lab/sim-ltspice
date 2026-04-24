@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `RawRead` — full binary `.raw` waveform parser. Decodes the three LTspice
+  body layouts (`real` default: float64 axis + float32 traces; `double`: all
+  float64; `complex`: all complex128) into NumPy arrays. Applies the
+  compressed-point sign convention on transient time axes. Fixture-backed
+  tests cover transient, `.op`, `.ac`, `.step`, and `.noise` files.
+- `sim_ltspice.raw` now exports `RawRead`, `Variable`, and
+  `UnsupportedRawFormat` alongside the original `trace_names` helper, which
+  stays available for callers that only need names.
+- `numpy>=1.24` is now a runtime dependency.
+
+### Known gaps (tracked for v0.2+)
+- ASCII `.raw` (``Values:`` sentinel) — deferred to PR 2.
+- `fastaccess` transposed layout — deferred; currently raises
+  `UnsupportedRawFormat`.
+- Cursor helpers (`.max`, `.rms`, `.sample_at`), expression evaluator,
+  CSV / DataFrame export, and run-diff helpers — PRs 2–4 in Stage 2f.
+
 ## [0.1.0] — 2026-04-24
 
 First public release. Flat-schematic authoring loop closed end-to-end:
@@ -38,5 +58,3 @@ batch → parse `.log` / `.raw`.
 - Layout engine covers passives and parallel shunts only; active
   topologies (op-amp feedback, common-emitter, differential) are
   deferred.
-
-## [Unreleased]
