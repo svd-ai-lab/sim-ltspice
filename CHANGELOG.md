@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.2.1] — 2026-04-24
+
+### Fixed
+- `log.parse_log` now parses AC-analysis `.meas` output. The previous
+  regex only matched plain scalar RHS + `FROM/TO`, so the macOS LTspice
+  17.2.4 log for an AC sweep came back with `measures == {}` even when
+  every directive was evaluated correctly. The rewrite handles:
+  - Complex RHS `(-0.0123613dB,0°)` — magnitude lands in `Measure.value`,
+    phase in `Measure.phase_deg`.
+  - `AT <freq>` / lowercase `at` suffix — axis point lands in `Measure.at`.
+  - WHEN-style measures where the RHS is an expression like
+    `peakmag*0.7071` — `Measure.value` is the AT axis point.
+  - CRLF line endings in the `.meas` block (LTspice 17 macOS mixes CRLF
+    meas lines with LF preamble; an anchored `$` under `re.MULTILINE`
+    quietly missed every one).
+
+### Added
+- `Measure.at` — axis point (frequency for AC, time for TRAN) for
+  `AT`-suffixed measurements.
+- `Measure.phase_deg` — phase in degrees for AC complex results.
+- `Measure.rhs_value` — the raw scalar right-hand side. Lets callers
+  disambiguate TRAN `FIND … AT` (measured value in RHS) from TRAN
+  `WHEN` (target value in RHS) even though the two forms are
+  identical in the log. See `Measure` docstring for the contract.
+
+All three fields default to `None` so existing callers keep working.
+
 ## [0.2.0] — 2026-04-24
 
 Closes Stage 2f: `.raw` waveform data access is now a first-class API.
