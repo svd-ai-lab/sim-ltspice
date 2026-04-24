@@ -17,7 +17,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from sim_ltspice import RawRead, UnsupportedRawFormat, trace_names
+from sim_ltspice import (
+    InvalidExpression,
+    RawRead,
+    UnsupportedRawFormat,
+    trace_names,
+)
 
 FIX = Path(__file__).parent / "fixtures" / "raw"
 
@@ -329,3 +334,118 @@ class TestCursors:
         val = self.ac.sample_at("V(in)", 1e3)
         assert isinstance(val, complex)
         assert val == pytest.approx(1 + 0j, abs=1e-9)
+
+
+class TestEval:
+    def setup_method(self):
+        self.rr = RawRead(FIX / "tran_rc.raw")
+        self.ac = RawRead(FIX / "ac_rlc.raw")
+
+    def test_difference(self):
+        """V(out) - V(in) matches the hand-computed difference."""
+        d = self.rr.eval("V(out) - V(in)")
+        expected = self.rr.trace("V(out)") - self.rr.trace("V(in)")
+        np.testing.assert_allclose(d, expected)
+
+    def test_arithmetic_with_literal(self):
+        """Numeric constants mix with trace refs."""
+        d = self.rr.eval("2 * V(out) + 1")
+        expected = 2 * self.rr.trace("V(out)") + 1
+        np.testing.assert_allclose(d, expected)
+
+    def test_literal_only_expression_broadcasts(self):
+        """Expression without traces still aligns with axis length."""
+        d = self.rr.eval("2.5 * 4")
+        assert d.shape == (self.rr.n_points,)
+        assert np.all(d == 10.0)
+
+    def test_complex_preserved_when_ac_traces_used(self):
+        """Any complex trace in the expression → complex128 result."""
+        d = self.ac.eval("V(out) / V(in)")
+        assert d.dtype == np.complex128
+
+    def test_nested_parens_and_unary(self):
+        d = self.rr.eval("-(V(out) - V(in)) * 0.5")
+        expected = -(self.rr.trace("V(out)") - self.rr.trace("V(in)")) * 0.5
+        np.testing.assert_allclose(d, expected)
+
+    def test_rejects_function_call(self):
+        with pytest.raises(InvalidExpression, match="Call"):
+            self.rr.eval("abs(V(out))")
+
+    def test_rejects_attribute_access(self):
+        with pytest.raises(InvalidExpression, match="Attribute"):
+            self.rr.eval("V(out).real")
+
+    def test_rejects_comparison(self):
+        with pytest.raises(InvalidExpression, match="Compare"):
+            self.rr.eval("V(out) > 0")
+
+    def test_rejects_boolean(self):
+        with pytest.raises(InvalidExpression, match="BoolOp"):
+            self.rr.eval("V(out) and 1")
+
+    def test_rejects_string_literal(self):
+        with pytest.raises(InvalidExpression, match="literal"):
+            self.rr.eval("'malicious'")
+
+    def test_rejects_subscript(self):
+        with pytest.raises(InvalidExpression, match="Subscript"):
+            self.rr.eval("V(out)[0]")
+
+    def test_unknown_trace_raises_keyerror(self):
+        """Missing trace names surface the normal KeyError, not InvalidExpression."""
+        with pytest.raises(KeyError, match="not found"):
+            self.rr.eval("V(foo) + V(bar)")
+
+    def test_syntax_error_wrapped(self):
+        with pytest.raises(InvalidExpression, match="could not be parsed"):
+            self.rr.eval("V(out) +")
+
+
+class TestCsvExport:
+    def test_real_trace_roundtrip(self, tmp_path):
+        rr = RawRead(FIX / "tran_rc.raw")
+        path = rr.to_csv(tmp_path / "out.csv")
+        assert path.exists()
+        text = path.read_text()
+        header = text.splitlines()[0]
+        assert header == "time,V(in),V(out),I(C1),I(R1),I(V1)"
+        # Spot-check the value at t=0 (all zeros for the pulse source).
+        second_row = text.splitlines()[1].split(",")
+        assert [float(x) for x in second_row] == [0.0] * 6
+
+    def test_complex_expands_re_im(self, tmp_path):
+        rr = RawRead(FIX / "ac_rlc.raw")
+        path = rr.to_csv(tmp_path / "ac.csv")
+        header = path.read_text().splitlines()[0].split(",")
+        # First few columns must be frequency.re, frequency.im, V(in).re, V(in).im
+        assert header[0] == "frequency.re"
+        assert header[1] == "frequency.im"
+        assert "V(in).re" in header
+        assert "V(in).im" in header
+
+    def test_creates_parent_dirs(self, tmp_path):
+        rr = RawRead(FIX / "tran_rc.raw")
+        path = rr.to_csv(tmp_path / "deep" / "nested" / "out.csv")
+        assert path.exists()
+
+
+class TestDataFrame:
+    def setup_method(self):
+        pytest.importorskip("pandas")
+        self.rr = RawRead(FIX / "tran_rc.raw")
+        self.ac = RawRead(FIX / "ac_rlc.raw")
+
+    def test_real_dataframe_shape(self):
+        df = self.rr.to_dataframe()
+        assert df.shape == (self.rr.n_points, self.rr.n_variables - 1)
+        assert df.index.name == "time"
+        assert list(df.columns) == ["V(in)", "V(out)", "I(C1)", "I(R1)", "I(V1)"]
+
+    def test_complex_preserved(self):
+        df = self.ac.to_dataframe()
+        assert df["V(in)"].dtype == np.complex128
+        # Index is on the real part of the frequency column.
+        assert df.index.name == "frequency"
+        assert df.index.dtype == np.float64

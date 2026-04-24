@@ -32,8 +32,12 @@ real timestamp. ``RawRead`` applies ``np.abs`` to the axis for
 """
 from __future__ import annotations
 
+import ast
+import csv
+import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -41,12 +45,17 @@ __all__ = [
     "RawRead",
     "Variable",
     "UnsupportedRawFormat",
+    "InvalidExpression",
     "trace_names",
 ]
 
 
 class UnsupportedRawFormat(ValueError):
     """Raised when a `.raw` file uses a variant we do not yet decode."""
+
+
+class InvalidExpression(ValueError):
+    """Raised when ``RawRead.eval`` is handed a disallowed expression."""
 
 
 @dataclass(frozen=True)
@@ -410,6 +419,177 @@ class RawRead:
                 np.interp(x, axis, arr.imag),
             )
         return float(np.interp(x, axis, arr))
+
+    # -- expression eval --------------------------------------------------
+
+    def eval(self, expression: str) -> np.ndarray:
+        """Evaluate an arithmetic expression over this raw's traces.
+
+        References to traces use SPICE syntax: ``V(out)``, ``I(R1)``,
+        ``V(node_name)``. Supported operators are ``+``, ``-``, ``*``,
+        ``/``, ``**`` (binary) and unary ``-``/``+``; numeric literals
+        (including scientific notation) are allowed; parentheses are
+        respected. Example::
+
+            rr.eval("V(out) - V(in)")
+            rr.eval("2 * V(out) / V(in)")
+            rr.eval("-I(R1) * 1000")
+
+        The return value is always a NumPy array aligned with ``axis``
+        (``complex128`` if any referenced trace is complex, else
+        ``float64``).
+
+        Calls, attribute access, subscripts, comparisons, and boolean
+        logic are deliberately rejected — post-process the returned
+        array with NumPy if you need ``abs``, ``angle``, FFTs, etc.
+        """
+        placeholders, namespace = self._substitute_traces(expression)
+        try:
+            tree = ast.parse(placeholders, mode="eval")
+        except SyntaxError as exc:
+            raise InvalidExpression(
+                f"expression {expression!r} could not be parsed: {exc.msg}"
+            ) from exc
+        self._validate_expression_nodes(tree)
+        try:
+            result = eval(  # noqa: S307 — node whitelist enforced above
+                compile(tree, "<raw-expr>", "eval"), {"__builtins__": {}}, namespace
+            )
+        except ZeroDivisionError as exc:
+            raise InvalidExpression(
+                f"expression {expression!r} raised ZeroDivisionError — "
+                "use np.where / np.errstate to handle singular points"
+            ) from exc
+        if np.isscalar(result):
+            # `2 * 3` has no trace references — promote so callers get a
+            # predictably-shaped ndarray.
+            result = np.full(self.n_points, result)
+        return np.asarray(result)
+
+    # Matches ``V(foo)``, ``I(R1)``, ``V(a.b)``, ``I(Q.c)`` etc. Names may
+    # contain letters, digits, underscore, dot and hyphen — LTspice permits
+    # all of those in node / device identifiers.
+    _TRACE_REF_RE = re.compile(
+        r"\b([VIvi])\s*\(\s*([A-Za-z_][A-Za-z_0-9.\-]*)\s*\)"
+    )
+
+    def _substitute_traces(self, expression: str) -> tuple[str, dict[str, Any]]:
+        """Replace ``V(x)``/``I(x)`` tokens with opaque Python identifiers.
+
+        Returns the rewritten expression and a namespace mapping each
+        placeholder to the trace ndarray.
+        """
+        namespace: dict[str, Any] = {}
+        mapping: dict[str, str] = {}
+
+        def _replace(match: re.Match[str]) -> str:
+            kind = match.group(1).upper()
+            node = match.group(2)
+            trace_name = f"{kind}({node})"
+            if trace_name in mapping:
+                return mapping[trace_name]
+            placeholder = f"_trace_{len(namespace)}"
+            # Raise KeyError via `trace()` with the standard error message
+            # so users see the full list of available names.
+            namespace[placeholder] = self.trace(trace_name)
+            mapping[trace_name] = placeholder
+            return placeholder
+
+        rewritten = self._TRACE_REF_RE.sub(_replace, expression)
+        return rewritten, namespace
+
+    # AST node types that are safe to execute with an empty builtins dict.
+    # ``ast.Constant`` covers every literal on 3.8+; ``ast.Num`` was
+    # deprecated in 3.12 and intentionally omitted.
+    _ALLOWED_AST = (
+        ast.Expression,
+        ast.BinOp,
+        ast.UnaryOp,
+        ast.Constant,
+        ast.Name,
+        ast.Load,
+        ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.Mod,
+        ast.USub, ast.UAdd,
+        ast.FloorDiv,
+    )
+
+    def _validate_expression_nodes(self, tree: ast.AST) -> None:
+        for node in ast.walk(tree):
+            if not isinstance(node, self._ALLOWED_AST):
+                raise InvalidExpression(
+                    f"unsupported expression construct: {type(node).__name__}. "
+                    "eval() accepts numeric literals, V(…)/I(…) trace "
+                    "references, and arithmetic operators only — post-"
+                    "process with NumPy for abs/angle/FFT/comparison."
+                )
+            if isinstance(node, ast.Constant) and not isinstance(
+                node.value, (int, float, complex)
+            ):
+                raise InvalidExpression(
+                    f"unsupported literal {node.value!r}; only numeric "
+                    "constants are allowed"
+                )
+
+    # -- export -----------------------------------------------------------
+
+    def to_csv(self, path: str | Path) -> Path:
+        """Write every trace to a CSV at ``path``.
+
+        Columns are the variable names in declaration order (the first
+        column is the axis). Complex traces expand into two columns —
+        ``<name>.re`` and ``<name>.im``.
+
+        Returns the resolved ``Path`` so callers can chain.
+        """
+        out = Path(path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+
+        with out.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            header: list[str] = []
+            for v in self.variables:
+                if self.is_complex:
+                    header.extend([f"{v.name}.re", f"{v.name}.im"])
+                else:
+                    header.append(v.name)
+            writer.writerow(header)
+
+            for p in range(self.n_points):
+                row: list[Any] = []
+                for v in self.variables:
+                    val = self._data[p, v.index]
+                    if self.is_complex:
+                        row.append(repr(float(val.real)))
+                        row.append(repr(float(val.imag)))
+                    else:
+                        row.append(repr(float(val)))
+                writer.writerow(row)
+        return out
+
+    def to_dataframe(self) -> Any:  # pandas.DataFrame at runtime
+        """Return the traces as a ``pandas.DataFrame``.
+
+        Requires the ``dataframe`` extra (``pip install
+        'sim-ltspice[dataframe]'``). The axis is the index; each
+        remaining variable gets one column. Complex traces stay as
+        complex dtype — pandas handles that natively.
+        """
+        try:
+            import pandas as pd
+        except ImportError as exc:  # pragma: no cover — coverage via test_requires
+            raise ImportError(
+                "to_dataframe() requires pandas; install with "
+                "`pip install 'sim-ltspice[dataframe]'` or `uv add pandas`"
+            ) from exc
+
+        axis_name = self.variables[0].name
+        if self.is_complex:
+            # Index on the real part so users can slice by freq value.
+            index = pd.Index(self._data[:, 0].real, name=axis_name)
+        else:
+            index = pd.Index(self._data[:, 0], name=axis_name)
+        data = {v.name: self._data[:, v.index] for v in self.variables[1:]}
+        return pd.DataFrame(data, index=index)
 
     def __repr__(self) -> str:
         return (

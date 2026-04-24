@@ -21,7 +21,13 @@ from sim_ltspice.netlist import (
     schematic_to_netlist,
     write_net,
 )
-from sim_ltspice.raw import RawRead, UnsupportedRawFormat, Variable, trace_names
+from sim_ltspice.raw import (
+    InvalidExpression,
+    RawRead,
+    UnsupportedRawFormat,
+    Variable,
+    trace_names,
+)
 from sim_ltspice.runner import (
     LtspiceError,
     LtspiceNotInstalled,
@@ -51,6 +57,7 @@ __all__ = [
     "Measure",
     "parse_log",
     "read_log",
+    "InvalidExpression",
     "RawRead",
     "UnsupportedRawFormat",
     "Variable",
