@@ -24,6 +24,14 @@ from sim_ltspice.raw import trace_names
 
 NETLIST_SUFFIXES = (".net", ".cir", ".sp")
 
+# Default subprocess-level timeout for a single LTspice invocation.
+# 300 s covers every simulation we ever run in tests while still
+# failing fast on the Windows session-0 hang (see
+# https://github.com/svd-ai-lab/sim-ltspice/issues/<TBD>). Users with
+# legitimately long sweeps can pass ``timeout=`` explicitly; pass
+# ``timeout=None`` to restore the pre-0.2 unbounded behaviour.
+DEFAULT_TIMEOUT_S = 300.0
+
 
 class LtspiceError(Exception):
     """Base class for sim_ltspice errors."""
@@ -35,6 +43,11 @@ class LtspiceNotInstalled(LtspiceError):
 
 class UnsupportedInput(LtspiceError):
     """Raised when the input file is not a netlist this runner accepts."""
+
+
+# A sentinel distinct from `None` so callers can explicitly say
+# "disable the timeout" via ``timeout=None``.
+_UNSET: float | None = -1.0
 
 
 @dataclass
@@ -62,7 +75,7 @@ def run_net(
     script: Path | str,
     *,
     install: Install | None = None,
-    timeout: float | None = None,
+    timeout: float | None = _UNSET,  # type: ignore[assignment]
 ) -> RunResult:
     """Run an LTspice batch simulation on a `.net` / `.cir` / `.sp` netlist.
 
@@ -71,7 +84,29 @@ def run_net(
     `result.log.errors` for those. Raises `LtspiceNotInstalled` if no
     install is discoverable and none was passed explicitly, and
     `UnsupportedInput` for non-netlist suffixes.
+
+    Parameters
+    ----------
+    timeout
+        Seconds to wait before killing LTspice. Default is
+        ``DEFAULT_TIMEOUT_S`` (300 s), which is long enough for any
+        sane simulation but fails fast on the Windows-session-0 hang
+        where LTspice never produces output. Pass ``timeout=None``
+        explicitly to restore unbounded waiting, or any positive float
+        to tighten the bound.
+
+    On timeout the child process is terminated and the returned
+    ``RunResult`` has ``exit_code != 0`` and a ``stderr`` describing
+    the timeout — no ``TimeoutExpired`` exception propagates.
     """
+    # Resolve the sentinel ``_UNSET`` → default. Explicit ``None`` keeps
+    # meaning "no timeout".
+    effective_timeout: float | None
+    if timeout is _UNSET:
+        effective_timeout = DEFAULT_TIMEOUT_S
+    else:
+        effective_timeout = timeout
+
     script = Path(script).resolve()
     if script.suffix.lower() not in NETLIST_SUFFIXES:
         raise UnsupportedInput(
@@ -97,12 +132,37 @@ def run_net(
 
     started = datetime.now(timezone.utc).isoformat()
     t0 = time.monotonic()
-    proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=effective_timeout,
+        )
+        exit_code = proc.returncode
+        stdout = proc.stdout or ""
+        stderr = proc.stderr or ""
+    except subprocess.TimeoutExpired as exc:
+        # subprocess.run already terminates and reaps the child on
+        # Python 3.5+, but captured output may be bytes (when no
+        # decode happened) — coerce defensively.
+        def _as_str(buf: bytes | str | None) -> str:
+            if buf is None:
+                return ""
+            if isinstance(buf, bytes):
+                return buf.decode("utf-8", errors="replace")
+            return buf
+
+        exit_code = 124  # GNU `timeout` convention
+        stdout = _as_str(exc.stdout)
+        stderr = (
+            f"sim_ltspice: LTspice timed out after {effective_timeout:g}s "
+            f"(script={script}). The process has been terminated. "
+            "On Windows, SSH session-0 spawns hang indefinitely — run "
+            "from an interactive desktop session instead, or pass "
+            "timeout=<seconds> to tighten the bound.\n"
+            + _as_str(exc.stderr)
+        )
     duration = time.monotonic() - t0
 
     log_path = script.with_suffix(".log")
@@ -111,9 +171,9 @@ def run_net(
     traces = trace_names(raw_path) if raw_path.is_file() else []
 
     return RunResult(
-        exit_code=proc.returncode,
-        stdout=proc.stdout or "",
-        stderr=proc.stderr or "",
+        exit_code=exit_code,
+        stdout=stdout,
+        stderr=stderr,
         duration_s=round(duration, 3),
         script=script,
         started_at=started,
