@@ -1,12 +1,13 @@
-"""Subprocess wrapper to run LTspice on a netlist.
+"""Subprocess wrapper to run LTspice on a netlist or schematic.
 
-Produces a typed `RunResult` that folds together: the subprocess
+`run_net` runs a `.net` / `.cir` / `.sp` file directly. `run_asc`
+flattens a `.asc` schematic to a temporary netlist via the pure-Python
+`schematic_to_netlist` path, then delegates to `run_net` — no LTspice
+binary in the authoring loop, only in the actual solve.
+
+Both produce a typed `RunResult` that folds together the subprocess
 outcome, the structured `.log` (via `sim_ltspice.log.parse_log`), and
 the `.raw` trace names (via `sim_ltspice.raw.trace_names`).
-
-`.asc` input handling is planned for a follow-up commit that adds the
-`Schematic` model + `schematic_to_netlist` flattener (macOS native) or
-shells to `LTspice -netlist` (Windows/wine).
 """
 from __future__ import annotations
 
@@ -17,9 +18,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sim_ltspice.asc import read_asc
 from sim_ltspice.install import Install, find_ltspice
 from sim_ltspice.log import LogResult, parse_log
+from sim_ltspice.netlist import schematic_to_netlist, write_net
 from sim_ltspice.raw import trace_names
+from sim_ltspice.symbols import SymbolCatalog
 
 
 NETLIST_SUFFIXES = (".net", ".cir", ".sp")
@@ -111,7 +115,7 @@ def run_net(
     if script.suffix.lower() not in NETLIST_SUFFIXES:
         raise UnsupportedInput(
             f"run_net accepts {NETLIST_SUFFIXES} (got {script.suffix}). "
-            f"For .asc schematics use run_asc() once available."
+            f"For .asc schematics use run_asc()."
         )
 
     if install is None:
@@ -182,3 +186,51 @@ def run_net(
         raw_path=raw_path if raw_path.is_file() else None,
         raw_traces=traces,
     )
+
+
+def run_asc(
+    script: Path | str,
+    *,
+    install: Install | None = None,
+    catalog: SymbolCatalog | None = None,
+    timeout: float | None = _UNSET,  # type: ignore[assignment]
+) -> RunResult:
+    """Run an LTspice batch simulation on a `.asc` schematic.
+
+    Flattens the schematic to a sibling `.net` via the pure-Python
+    `schematic_to_netlist` path, then delegates to `run_net`. The
+    intermediate netlist is written next to the `.asc` (overwriting any
+    existing file at that path, mirroring LTspice's own `-netlist`
+    convention) so the resulting `.log` and `.raw` land alongside it.
+
+    Parameters
+    ----------
+    catalog
+        SymbolCatalog used to resolve `SYMBOL` placements to `.asy`
+        definitions. Defaults to ``SymbolCatalog()``, which auto-discovers
+        from ``$LTSPICE_SYM_PATH`` or the platform's `lib/sym/` tree.
+    install, timeout
+        Forwarded to `run_net`.
+
+    Raises
+    ------
+    UnsupportedInput
+        If the file suffix is not `.asc`.
+    FlattenError
+        If a placed symbol cannot be resolved against the catalog or a
+        SYMBOL placement is missing its `InstName`.
+    LtspiceNotInstalled
+        From `run_net`, if no install is discoverable.
+    """
+    script = Path(script).resolve()
+    if script.suffix.lower() != ".asc":
+        raise UnsupportedInput(
+            f"run_asc accepts .asc (got {script.suffix}). "
+            f"For SPICE netlists use run_net()."
+        )
+
+    schem = read_asc(script)
+    netlist = schematic_to_netlist(schem, catalog or SymbolCatalog())
+    net_path = script.with_suffix(".net")
+    write_net(netlist, net_path)
+    return run_net(net_path, install=install, timeout=timeout)

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.2] — 2026-04-26
+
+### Added
+- `run_asc(script, *, install=None, catalog=None, timeout=...)` — closes
+  the GUI-free authoring loop. Reads the `.asc`, flattens via
+  `schematic_to_netlist` (default `SymbolCatalog()` auto-discovers from
+  `$LTSPICE_SYM_PATH` or the platform `lib/sym/` tree), writes a sibling
+  `.net`, and delegates to `run_net`. No LTspice binary participates in
+  the authoring path — only in the actual solve.
+
+  Raises `UnsupportedInput` for non-`.asc` inputs, `FlattenError` for
+  symbols the catalog can't resolve, and (from `run_net`)
+  `LtspiceNotInstalled` if no install is discoverable.
+
 ## [0.2.1] — 2026-04-24
 
 ### Fixed

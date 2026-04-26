@@ -6,7 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from sim_ltspice import NETLIST_SUFFIXES, LtspiceNotInstalled, UnsupportedInput, run_net
+from sim_ltspice import (
+    NETLIST_SUFFIXES,
+    LtspiceNotInstalled,
+    UnsupportedInput,
+    run_asc,
+    run_net,
+)
+from sim_ltspice.netlist import FlattenError
 from sim_ltspice.runner import DEFAULT_TIMEOUT_S
 
 
@@ -132,3 +139,169 @@ def test_rc_transient_runs_end_to_end(tmp_path):
     assert "V(out)" in result.raw_traces
     assert result.log_path and result.log_path.is_file()
     assert result.raw_path and result.raw_path.is_file()
+
+
+# ----------------------------------------------------------------------
+# run_asc
+# ----------------------------------------------------------------------
+
+
+def _rc_catalog():
+    """Synthetic catalog covering the symbols used in `_rc_asc`."""
+    from sim_ltspice.symbols import Pin, SymbolCatalog, SymbolDef
+
+    cat = SymbolCatalog.__new__(SymbolCatalog)
+    cat._search_paths = []
+    cat._index = {}
+    defs = [
+        SymbolDef(
+            name="res", path=Path("/fake/res.asy"), prefix="R",
+            pins=[Pin("1", 16, 16, spice_order=1), Pin("2", 16, 96, spice_order=2)],
+        ),
+        SymbolDef(
+            name="cap", path=Path("/fake/cap.asy"), prefix="C",
+            pins=[Pin("1", 16, 0, spice_order=1), Pin("2", 16, 64, spice_order=2)],
+        ),
+        SymbolDef(
+            name="voltage", path=Path("/fake/voltage.asy"), prefix="V",
+            pins=[Pin("1", 0, 16, spice_order=1), Pin("2", 0, 96, spice_order=2)],
+        ),
+    ]
+    cat._cache = {d.name.casefold(): d for d in defs}
+    cat.find = lambda name, _c=cat: _c._cache.get(name.casefold())  # type: ignore[assignment]
+    return cat
+
+
+def _write_rc_asc(path: Path) -> None:
+    """Minimal RC schematic — voltage source, R, C, OUT label, .tran directive."""
+    path.write_text(
+        "Version 4\n"
+        "SHEET 1 880 680\n"
+        "SYMBOL voltage 0 0 R0\n"
+        "SYMATTR InstName V1\n"
+        "SYMATTR Value PULSE(0 1 0 1u 1u 1m 2m)\n"
+        "SYMBOL res 96 0 R0\n"
+        "SYMATTR InstName R1\n"
+        "SYMATTR Value 1k\n"
+        "SYMBOL cap 192 16 R0\n"
+        "SYMATTR InstName C1\n"
+        "SYMATTR Value 1u\n"
+        "WIRE 0 16 112 16\n"
+        "WIRE 112 96 112 16\n"
+        "WIRE 112 96 208 96\n"
+        "WIRE 208 16 208 80\n"
+        "WIRE 0 96 0 16\n"
+        "WIRE 0 96 208 96\n"
+        "FLAG 208 16 OUT\n"
+        "FLAG 0 96 0\n"
+        "TEXT 0 200 Left 2 !.tran 0 5m 0 1u\n",
+        encoding="utf-8",
+    )
+
+
+def test_run_asc_rejects_non_asc(tmp_path):
+    p = tmp_path / "x.net"
+    p.write_text("* not an asc\n")
+    with pytest.raises(UnsupportedInput, match="run_asc accepts .asc"):
+        run_asc(p)
+
+
+def test_run_asc_propagates_flatten_error(tmp_path):
+    """A symbol the catalog can't resolve should raise FlattenError verbatim."""
+    asc = tmp_path / "bogus.asc"
+    asc.write_text(
+        "Version 4\n"
+        "SHEET 1 880 680\n"
+        "SYMBOL no_such_symbol 0 0 R0\n"
+        "SYMATTR InstName X1\n",
+        encoding="utf-8",
+    )
+    from sim_ltspice.symbols import SymbolCatalog
+    empty = SymbolCatalog.__new__(SymbolCatalog)
+    empty._search_paths = []
+    empty._index = {}
+    empty._cache = {}
+    empty.find = lambda name, _c=empty: None  # type: ignore[assignment]
+
+    with pytest.raises(FlattenError, match="no_such_symbol"):
+        run_asc(asc, catalog=empty)
+
+
+def test_run_asc_writes_sibling_netlist_and_delegates(monkeypatch, tmp_path):
+    """run_asc should flatten to <stem>.net next to the .asc and call run_net."""
+    asc = tmp_path / "rc.asc"
+    _write_rc_asc(asc)
+
+    captured: dict[str, object] = {}
+
+    def fake_run_net(script, *, install=None, timeout):
+        captured["script"] = Path(script)
+        captured["install"] = install
+        captured["timeout"] = timeout
+        from sim_ltspice.log import LogResult
+        from sim_ltspice.runner import RunResult
+        return RunResult(
+            exit_code=0, stdout="", stderr="",
+            duration_s=0.0, script=Path(script),
+            started_at="t", log=LogResult(),
+            log_path=None, raw_path=None, raw_traces=[],
+        )
+
+    monkeypatch.setattr("sim_ltspice.runner.run_net", fake_run_net)
+    result = run_asc(asc, catalog=_rc_catalog(), timeout=42.0)
+
+    expected_net = asc.with_suffix(".net")
+    assert captured["script"] == expected_net
+    assert captured["timeout"] == 42.0
+    assert expected_net.is_file()
+    text = expected_net.read_text()
+    assert "V1" in text and "R1" in text and "C1" in text
+    assert ".tran" in text.lower()
+    assert result.exit_code == 0
+
+
+def test_run_asc_passes_install_through(monkeypatch, tmp_path):
+    """If caller pins an Install, run_asc must forward it to run_net."""
+    from sim_ltspice.install import Install
+    asc = tmp_path / "rc.asc"
+    _write_rc_asc(asc)
+
+    fake_install = Install(
+        exe=tmp_path / "fake-ltspice", version="t", path=str(tmp_path), source="test",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run_net(script, *, install=None, timeout):
+        captured["install"] = install
+        from sim_ltspice.log import LogResult
+        from sim_ltspice.runner import RunResult
+        return RunResult(
+            exit_code=0, stdout="", stderr="",
+            duration_s=0.0, script=Path(script),
+            started_at="t", log=LogResult(),
+            log_path=None, raw_path=None, raw_traces=[],
+        )
+
+    monkeypatch.setattr("sim_ltspice.runner.run_net", fake_run_net)
+    run_asc(asc, install=fake_install, catalog=_rc_catalog())
+
+    assert captured["install"] is fake_install
+
+
+@pytest.mark.integration
+def test_run_asc_montecarlo_end_to_end(tmp_path):
+    """Real LTspice on the bundled montecarlo.asc fixture. Skipped if no install."""
+    import shutil
+
+    from sim_ltspice import find_ltspice
+
+    if not find_ltspice():
+        pytest.skip("LTspice not installed on this host")
+
+    asc = tmp_path / "montecarlo.asc"
+    shutil.copyfile(FIXTURES / "montecarlo.asc", asc)
+
+    result = run_asc(asc)
+    assert result.exit_code == 0, f"stderr: {result.stderr}"
+    assert (tmp_path / "montecarlo.net").is_file()
+    assert result.log_path and result.log_path.is_file()
