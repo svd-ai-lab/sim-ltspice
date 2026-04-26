@@ -21,7 +21,7 @@ from pathlib import Path
 from sim_ltspice.asc import read_asc
 from sim_ltspice.install import Install, find_ltspice
 from sim_ltspice.log import LogResult, parse_log
-from sim_ltspice.netlist import FlattenError, schematic_to_netlist, write_net
+from sim_ltspice.netlist import schematic_to_netlist, write_net
 from sim_ltspice.raw import trace_names
 from sim_ltspice.symbols import SymbolCatalog
 
