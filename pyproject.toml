@@ -1,6 +1,6 @@
 [project]
 name = "sim-ltspice"
-version = "0.2.1"
+version = "0.2.2"
 description = "Python API for LTspice: .asc / .asy / .net / .raw / .log parsing and a layout engine."
 readme = "README.md"
 license = "Apache-2.0"

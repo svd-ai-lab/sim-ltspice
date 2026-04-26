@@ -6,7 +6,7 @@ symbol catalog, layout engine) lands in subsequent commits.
 """
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.2.2"
 
 from sim_ltspice.asc import read_asc, write_asc
 from sim_ltspice.install import Install, find_ltspice
@@ -35,6 +35,7 @@ from sim_ltspice.runner import (
     NETLIST_SUFFIXES,
     RunResult,
     UnsupportedInput,
+    run_asc,
     run_net,
 )
 from sim_ltspice.schematic import (
@@ -71,6 +72,7 @@ __all__ = [
     "NETLIST_SUFFIXES",
     "RunResult",
     "UnsupportedInput",
+    "run_asc",
     "run_net",
     # Schematic authoring
     "Schematic",
