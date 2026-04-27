@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Sequence
 
 from sim_ltspice.asc import read_asc
 from sim_ltspice.install import Install, find_ltspice
@@ -80,6 +81,8 @@ def run_net(
     *,
     install: Install | None = None,
     timeout: float | None = _UNSET,  # type: ignore[assignment]
+    ini: Path | str | None = None,
+    sym_paths: Sequence[Path | str] = (),
 ) -> RunResult:
     """Run an LTspice batch simulation on a `.net` / `.cir` / `.sp` netlist.
 
@@ -98,6 +101,18 @@ def run_net(
         where LTspice never produces output. Pass ``timeout=None``
         explicitly to restore unbounded waiting, or any positive float
         to tighten the bound.
+    ini
+        Optional path to a custom `LTspice.ini` to use instead of the
+        per-user default (`%APPDATA%\\LTspice.ini` on Windows,
+        `~/Library/Preferences/LTspice.ini` on macOS). Useful for
+        reproducible CI runs where you don't want host state (window
+        positions, recent files, search paths) bleeding into results.
+        Forwarded as ``-ini <path>``.
+    sym_paths
+        Extra symbol / library search paths to inject for this run.
+        Forwarded as ``-I<path>`` flags. LTspice requires `-I<path>`
+        to be the **last** argument with **no space** after `-I`;
+        we handle that ordering for you.
 
     On timeout the child process is terminated and the returned
     ``RunResult`` has ``exit_code != 0`` and a ``stderr`` describing
@@ -129,10 +144,19 @@ def run_net(
 
     # Native macOS LTspice accepts only '-b <netlist>'. Windows / wine
     # additionally accept '-Run' (same effect).
+    cmd: list[str] = [str(install.exe)]
+    if ini is not None:
+        # `-ini <path>` placed early so it can't be confused with
+        # `-I<path>` (no-space) symbol-path injection.
+        cmd += ["-ini", str(Path(ini).expanduser().resolve())]
     if sys.platform == "darwin":
-        cmd = [str(install.exe), "-b", script.as_posix()]
+        cmd += ["-b", script.as_posix()]
     else:
-        cmd = [str(install.exe), "-Run", "-b", script.as_posix()]
+        cmd += ["-Run", "-b", script.as_posix()]
+    # `-I<path>` MUST be the last argument and there is NO space
+    # between `-I` and `<path>` (LTspice 26 docs).
+    for path in sym_paths:
+        cmd.append(f"-I{Path(path).expanduser().resolve()}")
 
     started = datetime.now(timezone.utc).isoformat()
     t0 = time.monotonic()
@@ -194,6 +218,8 @@ def run_asc(
     install: Install | None = None,
     catalog: SymbolCatalog | None = None,
     timeout: float | None = _UNSET,  # type: ignore[assignment]
+    ini: Path | str | None = None,
+    sym_paths: Sequence[Path | str] = (),
 ) -> RunResult:
     """Run an LTspice batch simulation on a `.asc` schematic.
 
@@ -209,7 +235,7 @@ def run_asc(
         SymbolCatalog used to resolve `SYMBOL` placements to `.asy`
         definitions. Defaults to ``SymbolCatalog()``, which auto-discovers
         from ``$LTSPICE_SYM_PATH`` or the platform's `lib/sym/` tree.
-    install, timeout
+    install, timeout, ini, sym_paths
         Forwarded to `run_net`.
 
     Raises
@@ -233,4 +259,10 @@ def run_asc(
     netlist = schematic_to_netlist(schem, catalog or SymbolCatalog())
     net_path = script.with_suffix(".net")
     write_net(netlist, net_path)
-    return run_net(net_path, install=install, timeout=timeout)
+    return run_net(
+        net_path,
+        install=install,
+        timeout=timeout,
+        ini=ini,
+        sym_paths=sym_paths,
+    )

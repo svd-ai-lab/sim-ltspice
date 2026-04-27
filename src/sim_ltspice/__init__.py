@@ -6,9 +6,10 @@ symbol catalog, layout engine) lands in subsequent commits.
 """
 from __future__ import annotations
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 from sim_ltspice.asc import read_asc, write_asc
+from sim_ltspice.cmp import ComponentModelCatalog, ModelDef, parse_cmp
 from sim_ltspice.install import Install, find_ltspice
 from sim_ltspice.log import LogResult, Measure, parse_log, read_log
 from sim_ltspice.layout import UnsupportedTopology, netlist_to_schematic
@@ -90,6 +91,10 @@ __all__ = [
     "SymbolDef",
     "Pin",
     "parse_asy",
+    # Component-model catalog (lib/cmp/standard.*)
+    "ComponentModelCatalog",
+    "ModelDef",
+    "parse_cmp",
     # Netlist
     "Directive",
     "Element",
