@@ -118,6 +118,143 @@ class TestTimeout:
         assert "session-0" in result.stderr  # keep the Windows-SSH hint
 
 
+class TestArgvShape:
+    """Cover the LTspice CLI flag construction in run_net.
+
+    These tests intercept ``subprocess.run`` and assert on the argv
+    that *would* have been passed to LTspice. No real binary is run.
+    """
+
+    def _stub_install(self, monkeypatch, tmp_path):
+        from sim_ltspice.install import Install
+
+        fake_exe = tmp_path / "LTspice"
+        fake_exe.write_text("#!/bin/sh\nexit 0\n")
+        fake_exe.chmod(0o755)
+        fake = Install(
+            exe=fake_exe, version="test", path=str(tmp_path), source="test"
+        )
+        monkeypatch.setattr("sim_ltspice.runner.find_ltspice", lambda: [fake])
+        return fake_exe
+
+    def _capture(self, monkeypatch):
+        captured: dict[str, object] = {}
+
+        def fake_run(args, **kwargs):
+            captured["args"] = list(args)
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr("sim_ltspice.runner.subprocess.run", fake_run)
+        return captured
+
+    def test_default_argv_unchanged(self, monkeypatch, tmp_path):
+        """Without ini/sym_paths, argv has no -ini / -I flags."""
+        self._stub_install(monkeypatch, tmp_path)
+        captured = self._capture(monkeypatch)
+        script = tmp_path / "rc.net"
+        script.write_text("* empty\n.end\n")
+        run_net(script)
+        argv = captured["args"]
+        assert not any(a == "-ini" for a in argv)
+        assert not any(a.startswith("-I") and a != "-ini" for a in argv)
+
+    def test_ini_param_inserted_before_b(self, monkeypatch, tmp_path):
+        """-ini <path> appears in argv when caller passes ini=."""
+        self._stub_install(monkeypatch, tmp_path)
+        captured = self._capture(monkeypatch)
+        script = tmp_path / "rc.net"
+        script.write_text("* empty\n.end\n")
+        ini = tmp_path / "clean.ini"
+        ini.write_text("[Options]\n")
+
+        run_net(script, ini=ini)
+        argv = captured["args"]
+        assert "-ini" in argv
+        ini_idx = argv.index("-ini")
+        assert argv[ini_idx + 1] == str(ini.resolve())
+        # -ini must come before -b
+        assert ini_idx < argv.index("-b")
+
+    def test_sym_paths_appear_as_I_flags(self, monkeypatch, tmp_path):
+        """sym_paths=[a, b] becomes -Ia, -Ib at the end of argv (no space)."""
+        self._stub_install(monkeypatch, tmp_path)
+        captured = self._capture(monkeypatch)
+        script = tmp_path / "rc.net"
+        script.write_text("* empty\n.end\n")
+        a = tmp_path / "a"
+        a.mkdir()
+        b = tmp_path / "b"
+        b.mkdir()
+
+        run_net(script, sym_paths=[a, b])
+        argv = captured["args"]
+        # Last two args must be -I<a>, -I<b> in order
+        assert argv[-2] == f"-I{a.resolve()}"
+        assert argv[-1] == f"-I{b.resolve()}"
+
+    def test_sym_paths_strictly_after_script(self, monkeypatch, tmp_path):
+        """LTspice docs require -I<path> to be the LAST arg."""
+        self._stub_install(monkeypatch, tmp_path)
+        captured = self._capture(monkeypatch)
+        script = tmp_path / "rc.net"
+        script.write_text("* empty\n.end\n")
+        sym_dir = tmp_path / "syms"
+        sym_dir.mkdir()
+
+        run_net(script, sym_paths=[sym_dir])
+        argv = captured["args"]
+        i_idx = next(i for i, a in enumerate(argv) if a.startswith("-I"))
+        script_idx = argv.index(script.as_posix())
+        assert i_idx > script_idx
+
+    def test_ini_and_sym_paths_combine(self, monkeypatch, tmp_path):
+        """Both flags together — ini early, -I last, deck in the middle."""
+        self._stub_install(monkeypatch, tmp_path)
+        captured = self._capture(monkeypatch)
+        script = tmp_path / "rc.net"
+        script.write_text("* empty\n.end\n")
+        ini = tmp_path / "clean.ini"
+        ini.write_text("[Options]\n")
+        sym_dir = tmp_path / "syms"
+        sym_dir.mkdir()
+
+        run_net(script, ini=ini, sym_paths=[sym_dir])
+        argv = captured["args"]
+        # Order check: -ini <ini> ... <script> -I<sym>
+        ini_idx = argv.index("-ini")
+        script_idx = argv.index(script.as_posix())
+        i_idx = next(i for i, a in enumerate(argv) if a.startswith("-I"))
+        assert ini_idx < script_idx < i_idx
+
+    def test_run_asc_forwards_ini_and_sym_paths(self, monkeypatch, tmp_path):
+        """run_asc must forward ini= and sym_paths= to run_net."""
+        asc = tmp_path / "rc.asc"
+        _write_rc_asc(asc)
+
+        captured: dict[str, object] = {}
+
+        def fake_run_net(script, **kwargs):
+            captured.update(kwargs)
+            from sim_ltspice.log import LogResult
+            from sim_ltspice.runner import RunResult
+            return RunResult(
+                exit_code=0, stdout="", stderr="",
+                duration_s=0.0, script=Path(script),
+                started_at="t", log=LogResult(),
+                log_path=None, raw_path=None, raw_traces=[],
+            )
+
+        monkeypatch.setattr("sim_ltspice.runner.run_net", fake_run_net)
+        ini = tmp_path / "clean.ini"
+        ini.write_text("[Options]\n")
+        sym_dir = tmp_path / "syms"
+        sym_dir.mkdir()
+
+        run_asc(asc, catalog=_rc_catalog(), ini=ini, sym_paths=[sym_dir])
+        assert captured["ini"] == ini
+        assert list(captured["sym_paths"]) == [sym_dir]
+
+
 @pytest.mark.integration
 def test_rc_transient_runs_end_to_end(tmp_path):
     """Real LTspice batch. Skipped if no install is visible."""
@@ -234,10 +371,9 @@ def test_run_asc_writes_sibling_netlist_and_delegates(monkeypatch, tmp_path):
 
     captured: dict[str, object] = {}
 
-    def fake_run_net(script, *, install=None, timeout):
+    def fake_run_net(script, **kwargs):
         captured["script"] = Path(script)
-        captured["install"] = install
-        captured["timeout"] = timeout
+        captured.update(kwargs)
         from sim_ltspice.log import LogResult
         from sim_ltspice.runner import RunResult
         return RunResult(
@@ -271,8 +407,8 @@ def test_run_asc_passes_install_through(monkeypatch, tmp_path):
     )
     captured: dict[str, object] = {}
 
-    def fake_run_net(script, *, install=None, timeout):
-        captured["install"] = install
+    def fake_run_net(script, **kwargs):
+        captured.update(kwargs)
         from sim_ltspice.log import LogResult
         from sim_ltspice.runner import RunResult
         return RunResult(

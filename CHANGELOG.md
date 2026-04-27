@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.2.3] — 2026-04-27
+
+### Added
+- `run_net(..., ini=Path|None, sym_paths=Sequence[Path])` and
+  `run_asc(..., ini=, sym_paths=)` — surface two LTspice CLI flags
+  that previously had no Python knob:
+  - `-ini <path>`: override the per-user settings file
+    (`%APPDATA%\LTspice.ini` on Windows). Lets CI runs use a clean
+    fixture ini so host state (window positions, recent files,
+    persisted search paths) doesn't bleed into results.
+  - `-I<path>`: inject extra symbol/library search paths for one run
+    without modifying the user-data `lib/`. LTspice docs require
+    `-I<path>` to be the *last* argument with *no* space after `-I`;
+    `run_net` constructs argv accordingly.
+- `sim_ltspice.cmp` — new module that parses LTspice's bundled
+  `lib/cmp/standard.{bjt,mos,dio,jft,cap,ind,res,bead}` files (the
+  closed enum of generic SPICE models). All eight files are UTF-16,
+  with a mix of BOM-prefixed and bare files; `_read_utf16` handles
+  both. Public API:
+  - `parse_cmp(path, *, kind=None) -> list[ModelDef]` — single-file parser.
+  - `ComponentModelCatalog` — auto-discovers `lib/cmp/` from the
+    `LTSPICE_CMP_PATH` env var or the platform user-data dir
+    (`%LOCALAPPDATA%\LTspice\lib\cmp\` on Windows,
+    `~/Library/Application Support/LTspice/lib/cmp/` on macOS).
+    Methods: `find(name)`, `models(kind)`, `names()`, `kinds()`,
+    plus `__contains__`/`__iter__`/`__len__`. Construct with
+    `search_paths=[...]` to override discovery.
+  - `ModelDef(name, kind, type, source)` frozen dataclass.
+
+### Why
+Result of the LTspice 26 reverse-engineering work in
+[svd-ai-lab/sim-proj#50](https://github.com/svd-ai-lab/sim-proj/issues/50).
+The `-ini` knob unlocks reproducible CI runs that were previously
+sensitive to the host's persisted GUI state. The cmp catalogue
+unlocks offline `Value <model>` lint — flagging `Q1 c b e 2N9999` at
+parse time rather than mid-simulation.
+
 ## [0.2.2] — 2026-04-26
 
 ### Added
