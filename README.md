@@ -1,5 +1,16 @@
 # sim-ltspice
 
+> **Archived / superseded:** this standalone repo is no longer the primary
+> distribution path. The maintained path for sim users is
+> [`sim-plugin-ltspice`](https://github.com/svd-ai-lab/sim-plugin-ltspice),
+> which bundles the LTspice file-format/runtime library together with the sim
+> driver in one wheel. New work should go there.
+>
+> - Install the maintained package with `sim plugin install sim-plugin-ltspice`
+>   or `pip install sim-plugin-ltspice`
+> - Existing `import sim_ltspice` users should migrate to the bundled library
+>   inside `sim-plugin-ltspice`
+
 Python API for **LTspice**, the free SPICE3 circuit simulator from Analog Devices.
 
 [LTspice](https://www.analog.com/en/resources/design-tools-and-calculators/ltspice-simulator.html) ships no Python API of its own. This library fills that gap — think of it as the equivalent of `pyfluent` or `matlabengine`, but for LTspice. It parses and emits every LTspice file format, indexes the shipped symbol library, and exposes a layout engine that turns a netlist into a reviewable `.asc` schematic.
